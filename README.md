@@ -15,4 +15,6 @@ buf generate
 go run cmd/main.go probinfo '{"name":"aplusb"}' | jq .
 
 go run cmd/main.go submit '{"problem":"aplusb", "source": "long long solve(long long a, long long b) { return a+b;}", "lang":"cpp-func"}' | jq .
+
+go run cmd/yosupocl/main.go download-test '{"name":"many_aplusb", "outdir": "test"}'
 ```
