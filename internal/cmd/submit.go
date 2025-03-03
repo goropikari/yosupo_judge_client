@@ -1,10 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -16,26 +13,35 @@ type SubmitRequest struct {
 }
 
 var submitCmd = &cobra.Command{
-	Use:   "submit",
+	Use:   "submit <problem url> <file path> [lang id]",
 	Short: "Submit your code",
+	Long:  "Submit your code. language id is optional. default is cpp.\nref: https://github.com/yosupo06/library-checker-judge/blob/6efba7d2120e85dee1f96507c2c535fa5f303b50/langs/langs.toml",
 	Run: func(cmd *cobra.Command, args []string) {
-		client, err := NewClient()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		req := SubmitRequest{}
-		if err := json.Unmarshal([]byte(args[0]), &req); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+		if len(args) < 2 {
+			cmd.Help()
 			return
 		}
 
-		resp, err := client.Submit(req)
-		if err != nil {
-			log.Fatal(err)
+		langID := "cpp"
+		if len(args) == 3 {
+			langID = args[2]
 		}
 
-		fmt.Println(resp)
+		url := args[0]
+		cl, err := NewClientFromProblemURL(url)
+		if err != nil {
+			handleError(err)
+			return
+		}
+
+		path := args[1]
+
+		res, err := cl.Submit(path, langID)
+		if err != nil {
+			handleError(err)
+			return
+		}
+
+		fmt.Print(res.GetId())
 	},
 }

@@ -1,82 +1,177 @@
 package cmd
 
 import (
-	"context"
-	"log"
+	"bytes"
+	"crypto/tls"
+	"encoding/binary"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
-	"time"
-
-	"github.com/ktr0731/grpc-web-go-client/grpcweb"
-	"google.golang.org/protobuf/encoding/protojson"
+	"strings"
 
 	pb "github.com/goropikari/yosupo_judge_client/proto/librarychecker"
+	"google.golang.org/protobuf/proto"
 )
 
-type Client struct {
-	client *grpcweb.ClientConn
+type ProtoMessage interface {
+	ProtoMessage()
 }
 
-func NewClient() (*Client, error) {
-	host := os.Getenv("YOSUPO_JUDGE_HOST")
-	port := os.Getenv("YOSUPO_JUDGE_PORT")
-
-	if host == "" {
-		host = "localhost"
-	}
-	if port == "" {
-		port = "12380"
-	}
-
-	addr := host + ":" + port
-	client, err := grpcweb.DialContext(addr, grpcweb.WithDefaultCallOptions())
+func NewClientFromProblemURL(rawurl string) (*client, error) {
+	problemURL, err := url.Parse(rawurl)
 	if err != nil {
 		return nil, err
 	}
-	return &Client{client: client}, nil
+
+	paths := strings.Split(problemURL.Path, "/")
+	problemName := paths[len(paths)-1]
+
+	if problemURL.Host == "judge.yosupo.jp" {
+		return newClient(clientOptions{
+			tls:         true,
+			hostname:    "v2.api.judge.yosupo.jp",
+			port:        "443",
+			problemName: problemName,
+		}), nil
+	}
+
+	opts := clientOptions{
+		tls:         false,
+		hostname:    "127.0.0.1",
+		port:        "12380",
+		problemName: problemName,
+	}
+
+	return newClient(opts), nil
 }
 
-func (c *Client) ProblemInfo(req ProblemInfoRequest) (string, error) {
-	in, out := new(pb.ProblemInfoRequest), new(pb.ProblemInfoResponse)
-	in.Name = req.Name
+type client struct {
+	cl          *http.Client
+	tls         bool
+	host        string
+	port        string
+	problemName string
+}
 
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
-	defer cancel()
-	if err := c.client.Invoke(
-		ctx,
+type clientOptions struct {
+	tls         bool
+	hostname    string
+	port        string
+	problemName string
+}
+
+func newClient(opts clientOptions) *client {
+	cl := http.DefaultClient
+	if opts.tls {
+		cl.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				ServerName: opts.hostname,
+			},
+		}
+	}
+
+	return &client{
+		cl:          http.DefaultClient,
+		tls:         opts.tls,
+		host:        opts.hostname,
+		port:        opts.port,
+		problemName: opts.problemName,
+	}
+}
+
+// proto message を marshal したものを返却する
+func (c *client) post(path string, msg proto.Message) ([]byte, error) {
+	url, err := url.JoinPath(c.baseURL(), path)
+	if err != nil {
+		return nil, err
+	}
+
+	pbbuf, err := proto.Marshal(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, 5)
+	i := uint32(len(pbbuf))
+	binary.BigEndian.PutUint32(buf[1:], i)
+	buf = append(buf, pbbuf...)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/grpc-web+proto")
+	req.Header.Set("x-grpc-web", "1")
+
+	res, err := c.cl.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	pbres, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	length := binary.BigEndian.Uint32(pbres[1:5])
+	return pbres[5 : 5+length], nil
+}
+
+func (c *client) baseURL() string {
+	scheme := "http"
+	if c.tls {
+		scheme = "https"
+	}
+	return scheme + "://" + c.host + ":" + c.port
+}
+
+func (c *client) ProblemName() string {
+	return c.problemName
+}
+
+func (c *client) ProblemInfo() (*pb.ProblemInfoResponse, error) {
+	res, err := c.post(
 		"/librarychecker.LibraryCheckerService/ProblemInfo",
-		in,
-		out,
-	); err != nil {
-		return "", err
+		&pb.ProblemInfoRequest{Name: c.problemName},
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	bs, err := protojson.Marshal(out)
-	if err != nil {
-		log.Fatal(err)
+	pbres := &pb.ProblemInfoResponse{}
+	if err := proto.Unmarshal(res, pbres); err != nil {
+		return nil, err
 	}
-	return string(bs), nil
+
+	return pbres, nil
 }
 
-func (c *Client) Submit(req SubmitRequest) (string, error) {
-	in, out := new(pb.SubmitRequest), new(pb.SubmitResponse)
-	in.Problem = req.Problem
-	in.Source = req.Source
-	in.Lang = req.Lang
-
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
-	defer cancel()
-	if err := c.client.Invoke(
-		ctx,
-		"/librarychecker.LibraryCheckerService/Submit",
-		in,
-		out,
-	); err != nil {
-		return "", err
-	}
-
-	bs, err := protojson.Marshal(out)
+func (c *client) Submit(filepath string, langID string) (*pb.SubmitResponse, error) {
+	data, err := os.ReadFile(filepath)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	return string(bs), nil
+
+	req := &pb.SubmitRequest{
+		Problem: c.problemName,
+		Source:  string(data),
+		Lang:    langID,
+	}
+
+	res, err := c.post(
+		"/librarychecker.LibraryCheckerService/Submit",
+		req,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	pbres := &pb.SubmitResponse{}
+	if err := proto.Unmarshal(res, pbres); err != nil {
+		return nil, err
+	}
+
+	return pbres, nil
 }
