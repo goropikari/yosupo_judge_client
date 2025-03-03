@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -18,8 +19,9 @@ var submitCmd = &cobra.Command{
 	Long:  "Submit your code. language id is optional. default is cpp.\nref: https://github.com/yosupo06/library-checker-judge/blob/6efba7d2120e85dee1f96507c2c535fa5f303b50/langs/langs.toml",
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) < 2 {
+			fmt.Println("invalid argument")
 			cmd.Help()
-			return
+			os.Exit(1)
 		}
 
 		langID := "cpp"

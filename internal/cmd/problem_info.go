@@ -21,7 +21,6 @@ var problemInfoCmd = &cobra.Command{
 			fmt.Println("invalid argument")
 			cmd.Help()
 			os.Exit(1)
-			return
 		}
 
 		cl, err := NewClientFromProblemURL(args[0])

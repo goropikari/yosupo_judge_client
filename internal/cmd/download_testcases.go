@@ -24,7 +24,9 @@ var downloadTestCasesCmd = &cobra.Command{
 	Long:  `doanload test cases`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) != 2 {
-			handleError(errors.New("invalid argument"))
+			fmt.Println("invalid argument")
+			cmd.Help()
+			os.Exit(1)
 		}
 
 		url := args[0]
