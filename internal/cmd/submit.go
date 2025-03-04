@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -29,8 +30,8 @@ var submitCmd = &cobra.Command{
 			langID = args[2]
 		}
 
-		url := args[0]
-		cl, err := NewClientFromProblemURL(url)
+		rawurl := args[0]
+		cl, err := NewClientFromProblemURL(rawurl)
 		if err != nil {
 			handleError(err)
 			return
@@ -44,6 +45,11 @@ var submitCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Print(res.GetId())
+		u, err := url.Parse(rawurl)
+		if err != nil {
+			handleError(err)
+		}
+
+		fmt.Printf("%s://%s/submission/%d", u.Scheme, u.Host, res.GetId())
 	},
 }
