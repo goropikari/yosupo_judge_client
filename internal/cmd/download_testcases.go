@@ -3,17 +3,14 @@ package cmd
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/spf13/cobra"
 )
@@ -38,10 +35,25 @@ var downloadTestCasesCmd = &cobra.Command{
 		res, err := cl.ProblemInfo()
 		handleError(err)
 
+		var testcases []testcase
 		if strings.HasPrefix(url, "https://judge.yosupo.jp") {
-			downloadTestcasesFromGoogleStorage(outdir, cl.ProblemName(), res.GetVersion(), res.GetTestcasesVersion())
+			testcases, err = downloadTestcasesFromGoogleStorage(cl.ProblemName(), res.GetVersion(), res.GetTestcasesVersion())
+			handleError(err)
 		} else {
-			downloadTestcasesFromLocal(outdir, cl.ProblemName(), res.GetTestcasesVersion())
+			testcases, err = downloadTestcasesFromLocal(cl.ProblemName(), res.GetTestcasesVersion())
+			handleError(err)
+		}
+
+		if err := os.MkdirAll(outdir, 0755); err != nil {
+			handleError(err)
+		}
+
+		for _, testcase := range testcases {
+			fmt.Println(testcase.name)
+			filename := fmt.Sprintf("%s/%s", outdir, testcase.name)
+			if err := os.WriteFile(filename, testcase.data, 0644); err != nil {
+				handleError(err)
+			}
 		}
 	},
 }
@@ -55,7 +67,12 @@ type InfoToml struct {
 	Tests []TestCaseInfo `toml:"tests"`
 }
 
-func downloadTestcasesFromGoogleStorage(outdir string, problemName string, version string, testcasesVersion string) {
+type testcase struct {
+	name string
+	data []byte
+}
+
+func downloadTestcasesFromGoogleStorage(problemName string, version string, testcasesVersion string) ([]testcase, error) {
 	cl := http.DefaultClient
 	cl.Transport = &http.Transport{
 		TLSClientConfig: &tls.Config{
@@ -71,17 +88,24 @@ func downloadTestcasesFromGoogleStorage(outdir string, problemName string, versi
 		),
 		nil,
 	)
-	handleError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	res, err := cl.Do(req)
-	handleError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	bs, err := io.ReadAll(res.Body)
-	handleError(err)
+	if err != nil {
+		return nil, err
+	}
 
 	info := &InfoToml{}
-	_, err = toml.Decode(string(bs), info)
-	handleError(err)
+	if _, err := toml.Decode(string(bs), info); err != nil {
+		return nil, err
+	}
 
 	testcnt := 0
 	for _, test := range info.Tests {
@@ -91,39 +115,43 @@ func downloadTestcasesFromGoogleStorage(outdir string, problemName string, versi
 		}
 	}
 
+	testcases := make([]testcase, 0)
 	for _, suffix := range []string{"in", "out"} {
 		for i := 0; i < testcnt; i++ {
+			filename := fmt.Sprintf("example_%02d.%s", i, suffix)
 			req, err := http.NewRequest(
 				"GET",
 				fmt.Sprintf(
-					"https://storage.googleapis.com/v2-prod-library-checker-data-public/v3/%s/testcase/%s/%s/example_%02d.%s",
+					"https://storage.googleapis.com/v2-prod-library-checker-data-public/v3/%s/testcase/%s/%s/%s",
 					problemName,
 					testcasesVersion,
 					suffix,
-					i,
-					suffix,
+					filename,
 				),
 				nil,
 			)
-			handleError(err)
+			if err != nil {
+				return nil, err
+			}
 
 			res, err := cl.Do(req)
-			handleError(err)
+			if err != nil {
+				return nil, err
+			}
 
 			bs, err := io.ReadAll(res.Body)
-			handleError(err)
-
-			os.Mkdir(outdir, 0755)
-			filename := fmt.Sprintf("%s/example_%02d.%s", outdir, i, suffix)
-			fmt.Println(filename)
-			if err := os.WriteFile(filename, bs, 0644); err != nil {
-				handleError(err)
+			if err != nil {
+				return nil, err
 			}
+
+			testcases = append(testcases, testcase{name: filename, data: bs})
 		}
 	}
+
+	return testcases, nil
 }
 
-func downloadTestcasesFromLocal(outdir string, problemName string, testcasesVersion string) {
+func downloadTestcasesFromLocal(problemName string, testcasesVersion string) ([]testcase, error) {
 	s3Endpoint := os.Getenv("S3_ENDPOINT")
 	if s3Endpoint == "" {
 		s3Endpoint = "http://127.0.0.1:9000"
@@ -140,36 +168,34 @@ func downloadTestcasesFromLocal(outdir string, problemName string, testcasesVers
 		Prefix: aws.String(fmt.Sprintf("v3/%s/testcase/%s", problemName, testcasesVersion)),
 	}
 
+	testcases := make([]testcase, 0)
 	objectPaginator := s3.NewListObjectsV2Paginator(svc, input)
 	for objectPaginator.HasMorePages() {
 		output, err := objectPaginator.NextPage(context.Background())
 		if err != nil {
-			var noBucket *types.NoSuchBucket
-			if errors.As(err, &noBucket) {
-				log.Printf("Bucket %s does not exist.\n", "hoge")
-				err = noBucket
-			}
-			break
+			return nil, err
 		} else {
 			for _, object := range output.Contents {
 				keys := strings.Split(*object.Key, "/")
 				name := keys[len(keys)-1]
-				fmt.Println(name)
 
 				result, err := svc.GetObject(context.Background(), &s3.GetObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    object.Key,
 				})
-				handleError(err)
+				if err != nil {
+					return nil, err
+				}
 
 				bs, err := io.ReadAll(result.Body)
-				handleError(err)
-
-				os.Mkdir(outdir, 0755)
-				if err := os.WriteFile(fmt.Sprintf("%s/%s", outdir, name), bs, 0644); err != nil {
-					handleError(err)
+				if err != nil {
+					return nil, err
 				}
+
+				testcases = append(testcases, testcase{name: name, data: bs})
 			}
 		}
 	}
+
+	return testcases, nil
 }
