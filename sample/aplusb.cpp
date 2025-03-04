@@ -46,11 +46,7 @@ int main() {
 }
 
 void solve() {
-    ll N;
-    cin >> N;
-    rep(i, N) {
-        ll a, b;
-        cin >> a >> b;
-        cout << a + b << endl;
-    }
+    ll a, b;
+    cin >> a >> b;
+    cout << a + b << endl;
 }
