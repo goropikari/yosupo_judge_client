@@ -16,11 +16,22 @@ aws s3 ls --recursive --endpoint-url http://localhost:9000 s3://testcase-public/
 ```sh
 buf generate
 
-yosupocl probinfo '{"name":"aplusb"}' | jq .
-yosupocl submit '{"problem":"aplusb", "source": "long long solve(long long a, long long b) { return a+b;}", "lang":"cpp-func"}' | jq .
-yosupocl download-test '{"name":"many_aplusb", "outdir": "test"}'
+$ yosupocl probinfo https://judge.yosupo.jp/problem/aplusb | jq .
+{
+  "title": "A + B",
+  "source_url": "https://github.com/yosupo06/library-checker-problems/tree/master/sample/aplusb",
+  "time_limit": 2,
+  "version": "970b9dc1dca7858d5bb9d9b06ad79fd741a211c754a5b67b3448032906835138",
+  "testcases_version": "c190c9571890cf3710f989430d14d54d73dbddebfe5d184bf87b5e687688e10c"
+}
 
-go run cmd/yosupocl/main.go probinfo '{"name":"aplusb"}' | jq .
-go run cmd/yosupocl/main.go submit '{"problem":"aplusb", "source": "long long solve(long long a, long long b) { return a+b;}", "lang":"cpp-func"}' | jq .
-go run cmd/yosupocl/main.go download-test '{"name":"many_aplusb", "outdir": "test"}'
+$ yosupocl download-test https://judge.yosupo.jp/problem/aplusb outdir
+example_00.in
+example_01.in
+example_00.out
+example_01.out
+
+
+$ yosupocl submit https://judge.yosupo.jp/problem/aplusb sample/aplusb.cpp cpp
+https://judge.yosupo.jp/submission/271165
 ```
