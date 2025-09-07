@@ -37,21 +37,21 @@ var downloadTestCasesCmd = &cobra.Command{
 
 		var testcases []testcase
 		if strings.HasPrefix(url, "https://judge.yosupo.jp") {
-			testcases, err = downloadTestcasesFromGoogleStorage(cl.ProblemName(), res.GetVersion(), res.GetTestcasesVersion())
+			testcases, err = downloadTestcasesFromGoogleStorage(cl.ProblemName(), res.GetOverallVersion(), res.GetTestcasesVersion())
 			handleError(err)
 		} else {
 			testcases, err = downloadTestcasesFromLocal(cl.ProblemName(), res.GetTestcasesVersion())
 			handleError(err)
 		}
 
-		if err := os.MkdirAll(outdir, 0755); err != nil {
+		if err := os.MkdirAll(outdir, 0o755); err != nil {
 			handleError(err)
 		}
 
 		for _, testcase := range testcases {
 			fmt.Println(testcase.name)
 			filename := fmt.Sprintf("%s/%s", outdir, testcase.name)
-			if err := os.WriteFile(filename, testcase.data, 0644); err != nil {
+			if err := os.WriteFile(filename, testcase.data, 0o644); err != nil {
 				handleError(err)
 			}
 		}
@@ -72,19 +72,21 @@ type testcase struct {
 	data []byte
 }
 
-func downloadTestcasesFromGoogleStorage(problemName string, version string, testcasesVersion string) ([]testcase, error) {
+func downloadTestcasesFromGoogleStorage(problemName string, overallVersion, testcasesVersion string) ([]testcase, error) {
 	cl := http.DefaultClient
 	cl.Transport = &http.Transport{
 		TLSClientConfig: &tls.Config{
 			ServerName: "storage.googleapis.com",
 		},
 	}
+	// /v2-prod-library-checker-data-public/v4/files/aplusb/3f2738580d344d25135c2a27db1c23ad1297e6e99e1c1ff8e0724ee7183f2989/aplusb/info.toml
 	req, err := http.NewRequest(
 		"GET",
 		fmt.Sprintf(
-			"https://storage.googleapis.com/v2-prod-library-checker-data-public/v3/%s/files/%s/info.toml",
+			"https://storage.googleapis.com/v2-prod-library-checker-data-public/v4/files/%s/%s/%s/info.toml",
 			problemName,
-			version,
+			overallVersion,
+			problemName,
 		),
 		nil,
 	)
@@ -122,7 +124,7 @@ func downloadTestcasesFromGoogleStorage(problemName string, version string, test
 			req, err := http.NewRequest(
 				"GET",
 				fmt.Sprintf(
-					"https://storage.googleapis.com/v2-prod-library-checker-data-public/v3/%s/testcase/%s/%s/%s",
+					"https://storage.googleapis.com/v2-prod-library-checker-data-public/v4/examples/%s/%s/%s/%s",
 					problemName,
 					testcasesVersion,
 					suffix,
@@ -165,7 +167,7 @@ func downloadTestcasesFromLocal(problemName string, testcasesVersion string) ([]
 	})
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
-		Prefix: aws.String(fmt.Sprintf("v3/%s/testcase/%s", problemName, testcasesVersion)),
+		Prefix: aws.String(fmt.Sprintf("v4/examples/%s/%s", problemName, testcasesVersion)),
 	}
 
 	testcases := make([]testcase, 0)
